@@ -209,9 +209,10 @@ class OpenAIModel(BaseModel):
     }
 
     SHORTCUTS = {
+        "gpt4": "gpt-4-1106",
         "gpt3": "gpt-3.5-turbo-1106",
         "gpt3-legacy": "gpt-3.5-turbo-16k-0613",
-        "gpt4": "gpt-4-1106-preview",
+        "gpt4-preview": "gpt-4-1106-preview",
         "gpt4-legacy": "gpt-4-0613",
         "gpt4-0125": "gpt-4-0125-preview",
         "gpt3-0125": "gpt-3.5-turbo-0125",
