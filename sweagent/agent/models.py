@@ -196,7 +196,7 @@ class OpenAIModel(BaseModel):
             "cost_per_input_token": 3e-05,
             "cost_per_output_token": 6e-05,
         },
-        "gpt-4-1106-preview": {
+        "gpt-4-1106": {
             "max_context": 128_000,
             "cost_per_input_token": 1e-05,
             "cost_per_output_token": 3e-05,
