@@ -1,22 +1,23 @@
-import config
 import json
 import logging
 import os
-import together
-
 from collections import defaultdict
-from anthropic import Anthropic, HUMAN_PROMPT, AI_PROMPT
 from dataclasses import dataclass, fields
-from openai import BadRequestError, OpenAI
+from typing import Optional
+
+import together
+from anthropic import AI_PROMPT, HUMAN_PROMPT, Anthropic
+from openai import AzureOpenAI, BadRequestError, OpenAI
 from simple_parsing.helpers import FrozenSerializable, Serializable
-from sweagent.agent.commands import Command
 from tenacity import (
     retry,
+    retry_if_not_exception_type,
     stop_after_attempt,
     wait_random_exponential,
-    retry_if_not_exception_type,
 )
-from typing import Optional
+
+import config
+from sweagent.agent.commands import Command
 
 logger = logging.getLogger("api_models")
 
@@ -48,7 +49,7 @@ class APIStats(Serializable):
             field.name: getattr(self, field.name) + getattr(other, field.name)
             for field in fields(self)
         })
-    
+
     def replace(self, other):
         if not isinstance(other, APIStats):
             raise TypeError("Can only replace APIStats with APIStats")
@@ -98,7 +99,8 @@ class BaseModel:
             self.api_model = args.model_name.split('ollama:', 1)[1]
             self.model_metadata = self.MODELS[self.api_model]
         else:
-            raise ValueError(f"Unregistered model ({args.model_name}). Add model name to MODELS metadata to {self.__class__}")
+            raise ValueError(
+                f"Unregistered model ({args.model_name}). Add model name to MODELS metadata to {self.__class__}")
 
     def reset_stats(self, other: APIStats = None):
         if other is None:
@@ -220,7 +222,14 @@ class OpenAIModel(BaseModel):
 
         # Set OpenAI key
         cfg = config.Config(os.path.join(os.getcwd(), "keys.cfg"))
-        self.client = OpenAI(api_key=cfg["OPENAI_API_KEY"])
+        if "AZURE_OPENAI_API_KEY" in cfg:
+            self.client = AzureOpenAI(
+                api_key=cfg["AZURE_OPENAI_API_KEY"],
+                api_version=cfg["AZURE_OPENAI_VERSION"],
+                azure_endpoint=cfg["AZURE_OPENAI_ENDPOINT"]
+            )
+        else:
+            self.client = OpenAI(api_key=cfg["OPENAI_API_KEY"])
 
     def history_to_messages(
         self, history: list[dict[str, str]], is_demonstration: bool = False
@@ -242,7 +251,8 @@ class OpenAIModel(BaseModel):
         wait=wait_random_exponential(min=1, max=15),
         reraise=True,
         stop=stop_after_attempt(3),
-        retry=retry_if_not_exception_type((CostLimitExceededError, RuntimeError)),
+        retry=retry_if_not_exception_type(
+            (CostLimitExceededError, RuntimeError)),
     )
     def query(self, history: list[dict[str, str]]) -> str:
         """
@@ -257,7 +267,8 @@ class OpenAIModel(BaseModel):
                 top_p=self.args.top_p,
             )
         except BadRequestError as e:
-            raise CostLimitExceededError(f"Context window ({self.model_metadata['max_context']} tokens) exceeded")
+            raise CostLimitExceededError(
+                f"Context window ({self.model_metadata['max_context']} tokens) exceeded")
         # Calculate + update costs, return response
         input_tokens = response.usage.prompt_tokens
         output_tokens = response.usage.completion_tokens
@@ -320,7 +331,8 @@ class AnthropicModel(BaseModel):
         if self.api_model in ["claude-instant", "claude-2"]:
             # Remove system messages if it is a demonstration
             if is_demonstration:
-                history = [entry for entry in history if entry["role"] != "system"]
+                history = [
+                    entry for entry in history if entry["role"] != "system"]
             # Map history to Claude format
             prompt = "\n\n"
             for entry in history:
@@ -348,7 +360,8 @@ class AnthropicModel(BaseModel):
         last_role = None
         for message in reversed(messages):
             if last_role == message["role"]:
-                compiled_messages[-1]["content"] = message["content"] + "\n" + compiled_messages[-1]["content"]
+                compiled_messages[-1]["content"] = message["content"] + \
+                    "\n" + compiled_messages[-1]["content"]
             else:
                 compiled_messages.append(message)
             last_role = message["role"]
@@ -363,7 +376,8 @@ class AnthropicModel(BaseModel):
         wait=wait_random_exponential(min=1, max=15),
         reraise=True,
         stop=stop_after_attempt(3),
-        retry=retry_if_not_exception_type((CostLimitExceededError, RuntimeError)),
+        retry=retry_if_not_exception_type(
+            (CostLimitExceededError, RuntimeError)),
     )
     def query(self, history: list[dict[str, str]]) -> str:
         """
@@ -377,7 +391,8 @@ class AnthropicModel(BaseModel):
             completion = self.api.completions.create(
                 model=self.api_model,
                 prompt=prompt,
-                max_tokens_to_sample=self.model_metadata["max_context"] - input_tokens,
+                max_tokens_to_sample=self.model_metadata["max_context"] -
+                input_tokens,
                 temperature=self.args.temperature,
                 top_p=self.args.top_p,
             )
@@ -443,7 +458,8 @@ class OllamaModel(BaseModel):
         wait=wait_random_exponential(min=1, max=15),
         reraise=True,
         stop=stop_after_attempt(3),
-        retry=retry_if_not_exception_type((CostLimitExceededError, RuntimeError)),
+        retry=retry_if_not_exception_type(
+            (CostLimitExceededError, RuntimeError)),
     )
     def query(self, history: list[dict[str, str]]) -> str:
         """
@@ -492,7 +508,7 @@ class TogetherModel(BaseModel):
             "max_context": 32768,
             "cost_per_input_token": 6e-07,
             "cost_per_output_token": 6e-07,
-        },           
+        },
     }
 
     SHORTCUTS = {
@@ -530,7 +546,8 @@ class TogetherModel(BaseModel):
         wait=wait_random_exponential(min=1, max=15),
         reraise=True,
         stop=stop_after_attempt(3),
-        retry=retry_if_not_exception_type((CostLimitExceededError, RuntimeError)),
+        retry=retry_if_not_exception_type(
+            (CostLimitExceededError, RuntimeError)),
     )
     def query(self, history: list[dict[str, str]]) -> str:
         """
@@ -547,7 +564,8 @@ class TogetherModel(BaseModel):
             top_p=self.args.top_p,
         )
         # Calculate + update costs, return response
-        response = completion["output"]["choices"][0]["text"].split("<human>")[0]
+        response = completion["output"]["choices"][0]["text"].split("<human>")[
+            0]
         input_tokens = completion["output"]["usage"]["prompt_tokens"]
         output_tokens = completion["output"]["usage"]["completion_tokens"]
         self.update_stats(input_tokens, output_tokens)
@@ -628,7 +646,7 @@ class HumanThoughtModel(HumanModel):
                 break
             thought_all += thought
             thought = input("... ")
-        
+
         action = super().query(history, action_prompt="Action: ")
 
         return f"{thought_all}\n```\n{action}\n```"
